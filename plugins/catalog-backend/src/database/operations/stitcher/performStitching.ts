@@ -33,7 +33,10 @@ import {
 import { buildEntitySearch } from './buildEntitySearch';
 import { markDeferredStitchCompleted } from './markDeferredStitchCompleted';
 import { BATCH_SIZE, generateStableHash } from './util';
-import { LoggerService } from '@backstage/backend-plugin-api';
+import {
+  LoggerService,
+  isDatabaseConflictError,
+} from '@backstage/backend-plugin-api';
 
 // See https://github.com/facebook/react/blob/f0cf832e1d0c8544c36aa8b310960885a11a847c/packages/react-dom-bindings/src/shared/sanitizeURL.js
 const scriptProtocolPattern =
@@ -235,6 +238,16 @@ export async function performStitching(options: {
 
     return 'changed';
   } catch (error) {
+    // It's possible to hit a race where a refresh_state table delete + insert
+    // is done just after we read the entity_id from it. This conflict is safe
+    // to ignore because the current stitching operation will be triggered by
+    // the old entry, and the new entry will trigger it's own stitching that
+    // will update the entity.
+    if (isDatabaseConflictError(error)) {
+      logger.debug(`Skipping stitching of ${entityRef}, conflict`, error);
+      return 'abandoned';
+    }
+
     removeFromStitchQueueOnCompletion = false;
     throw error;
   } finally {
